@@ -10,23 +10,27 @@ Desenvolvido para a atividade avaliativa da disciplina de **Fundamentos de Redes
 
 | Nome | Matrícula |
 | :--- | :--- |
-| _— preencher —_ | _— preencher —_ |
-| _— preencher —_ | _— preencher —_ |
-| _— preencher —_ | _— preencher —_ |
+| _— Edson Rocha da Silva —_ | _— 2025012382 —_ |
+| _— Matheus Soares Diniz Couto  —_ | _— 2025027545 —_ |
+| _— David de Carvalho Santos  —_ | _— 2025012373 —_ |
+
+
 
 ---
 
 ## 1. Problema que a aplicação resolve
 
-Dois processos executando em **máquinas distintas** (ou na mesma máquina, para fins didáticos) precisam **conversar entre si em tempo real**, de forma **confiável e ordenada**. A aplicação resolve o problema de **transmissão de mensagens de texto bidirecional** entre um cliente e um servidor, demonstrando na prática como a **camada de aplicação** utiliza a **camada de transporte (TCP)** e a **primitiva de sockets** para se comunicar através da rede.
+Dois processos executando em **máquinas distintas** (ou na mesma máquina, para fins didáticos) precisam **conversar entre si**, de forma **confiável e ordenada**. A aplicação resolve o problema de **transmissão de mensagens de texto bidirecional** entre um cliente e um servidor, demonstrando na prática como a **camada de aplicação** utiliza a **camada de transporte (TCP)** e a **primitiva de sockets** para se comunicar através da rede.
+
+> **Nota sobre "tempo real":** os comandos `PING`/`ECHO`/`EXIT` são respondidos **automaticamente** por um thread receptor, mesmo enquanto o operador digita a resposta de um chat. Já as mensagens de chat (`HELLO` → `MSG`) aguardam a digitação do operador no servidor — o que é o comportamento esperado de um chat operado por humano, e não uma limitação do transporte.
 
 ---
 
-## 2. Processos envolvidados na comunicação
+## 2. Processos envolvidos na comunicação
 
 | Processo | Arquivo | Papel |
 | :--- | :--- | :--- |
-| **Servidor** | `server.py` | Fica em modo passivo, escutando na porta `5000` em `0.0.0.0` (todas as interfaces). Aceita a conexão e responde às mensagens. |
+| **Servidor** | `server.py` | Fica em modo passivo, escutando na porta `5000` em `0.0.0.0` (todas as interfaces). Aceita conexões em um loop (`accept()`) e atende cada cliente em uma thread própria. |
 | **Cliente** | `client.py` | Inicia a conexão (modo ativo) com o IP e porta do servidor, envia mensagens e imprime as respostas. |
 | **Protocolo** | `protocol.py` | Módulo compartilhado com a definição do **protocolo de aplicação** (criação, validação e leitura das mensagens). |
 
@@ -55,14 +59,25 @@ Dois processos executando em **máquinas distintas** (ou na mesma máquina, para
                 │                                         │
             listen()                                      │
                 │                                         │
-            accept() ◄─── Three-Way Handshake ────────── connect()
+                │            Three-Way Handshake          │
+                │         (SYN / SYN-ACK / ACK)           │
+                │        ◄──── feito pelo kernel ────►    │
+                │            ANTES do accept()            │
+                │                                         │
+            accept()                                      │
+        (retorna um socket                                 │
+         já conectado)                                    │
                 │                                         │
                 │ ◄─────────── sendall() / recv() ─────── │
                 │                                         │
                 │ ──────────── sendall() / recv() ──────► │
                 │                                         │
-             close() ◄──────── Fechamento FIN/ACK ─────── close()
+             close() ◄──── Fechamento FIN/ACK ────────► close()
+                │          (4 segmentos: FIN+ACK de       │
+                │           cada lado, em duas fases)      │
 ```
+
+> **Nota:** o *Three-Way Handshake* é realizado pelo kernel TCP e **já termina antes** de `accept()` retornar — `accept()` apenas "desenfileira" uma conexão que o kernel já estabeleceu. Por isso, um segundo cliente consegue completar o handshake (o kernel aceita no *backlog*) mesmo antes de o programa chamar `accept()` novamente.
 
 ---
 
@@ -77,7 +92,7 @@ Dois processos executando em **máquinas distintas** (ou na mesma máquina, para
 3. **Detecção de desconexão:** se o cliente fechar o terminal, o `recv()` do servidor recebe `b""` (ou levanta `ConnectionResetError`), permitindo tratar a saída de forma limpa.
 4. **Fluxo de bytes:** o TCP entrega exatamente a sequência de bytes enviada — ideal para um protocolo de texto delimitado por `\n`.
 
-### 8. O que aconteceria se usássemos **UDP**?
+### 6. O que aconteceria se usássemos **UDP**?
 
 Se o transporte fosse **UDP** (`SOCK_DGRAM`, sem conexão):
 - **Sem handshake:** não haveria fase de conexão; o cliente poderia "enviar para o vazio" sem saber se o servidor existe.
@@ -89,7 +104,7 @@ Se o transporte fosse **UDP** (`SOCK_DGRAM`, sem conexão):
 
 ---
 
-## 6. Protocolo da aplicação (protocolo próprio)
+## 7. Protocolo da aplicação (protocolo próprio)
 
 As mensagens seguem o formato textual, delimitado por linha:
 
@@ -97,7 +112,7 @@ As mensagens seguem o formato textual, delimitado por linha:
 <TIPO>:<DADOS>\n
 ```
 
-- `<TIPO>` — identificador do tipo da mensagem (ex.: `HELLO`, `ACK`).
+- `<TIPO>` — identificador do tipo da mensagem (ex.: `HELLO`, `MSG`).
 - `<DADOS>` — conteúdo da mensagem (pode conter espaços, acentos e até o caractere `:` — o parsing separa apenas no **primeiro** `:`).
 - `\n` — **delimitador de mensagem** (*framing*). Como o TCP é um fluxo de bytes, o receptor acumula dados em um buffer até encontrar o `\n`, garantindo que mensagens grandes ou fragmentadas em vários segmentos sejam lidas corretamente.
 
@@ -105,7 +120,7 @@ Este protocolo é implementado no módulo **`protocol.py`**, compartilhado por c
 
 ---
 
-## 7. Mensagens utilizadas
+## 8. Mensagens utilizadas
 
 | Tipo | Direção | Dados | Significado |
 | :--- | :--- | :--- | :--- |
@@ -114,23 +129,28 @@ Este protocolo é implementado no módulo **`protocol.py`**, compartilhado por c
 | `ECHO` | Servidor → Cliente | mesmos dados recebidos | Resposta ao eco |
 | `PING` | Cliente → Servidor | (vazio) | *Keep-alive* / teste de conectividade |
 | `PONG` | Servidor → Cliente | (vazio) | Resposta ao `PING` |
-| `ACK` | Servidor → Cliente | texto de resposta | Confirmação / resposta do servidor |
+| `MSG` | Servidor → Cliente | texto de resposta | Resposta do operador a uma mensagem de chat |
 | `EXIT` | Cliente → Servidor | motivo (ex.: `bye`) | Cliente deseja encerrar a sessão |
+| `BYE` | Servidor → Cliente | motivo (ex.: `sessao_encerrada`) | Confirmação de encerramento / aviso de desligamento |
 | `ERROR` | Servidor → Cliente | motivo do erro | Erro de protocolo (ex.: `formato_invalido`) |
 
-### Exemplos de mensagens capturadas na rede
+> O `ACK` genérico foi dividido em dois tipos com papéis claros: `MSG` (resposta de chat) e `BYE` (encerramento). Isso evita ambiguidade entre "resposta do operador", "confirmação de EXIT" e "aviso de shutdown" — que antes eram todos `ACK`.
+
+### Exemplos de mensagens (formato que trafega na rede)
 
 ```text
 HELLO:Olá, tudo bem?
-ACK:Oi! Tudo ótimo.
+MSG:Oi! Tudo ótimo.
 ECHO:ecoa isto
 ECHO:ecoa isto
-PING
-PONG
+PING:
+PONG:
 EXIT:bye
-ACK:sessao_encerrada
+BYE:sessao_encerrada
 ERROR:formato_invalido: Mensagem sem separador ':' ...
 ```
+
+> **Atenção:** todo tipo vai seguido de `:`, mesmo com os dados vazios — `PING:` e `PONG:` (não `PING`/`PONG`). O cliente `/ping` envia exatamente `PING:\n`.
 
 ### Comandos digitados pelo usuário (lado do cliente)
 
@@ -138,8 +158,9 @@ ERROR:formato_invalido: Mensagem sem separador ':' ...
 | :--- | :--- |
 | _(texto livre)_ | `HELLO:<texto>` |
 | `/eco <texto>` | `ECHO:<texto>` |
-| `/ping` | `PING` |
-| `/sair` | `EXIT:bye` e encerra a conexão |
+| `/ping` | `PING:` |
+| `/sair` | `EXIT:bye`, lê o `BYE` do servidor e só então encerra (FIN limpo) |
+| `/ajuda` | _(não envia nada — apenas mostra a ajuda local)_ |
 
 ---
 
@@ -151,7 +172,7 @@ ERROR:formato_invalido: Mensagem sem separador ':' ...
 | :--- | :--- | :--- |
 | Servidor não está no ar | `ConnectionRefusedError` | Mensagem orientando a verificar o servidor e a porta |
 | IP/host inexistente | `socket.gaierror` | Mensagem de "endereço inválido" com sugestão de IP |
-| Servidor não responde a tempo | `socket.settimeout(10)` + `TimeoutError` | Mensagem de "tempo esgotado ao conectar" |
+| Servidor não responde a tempo | `socket.settimeout(10)` **antes do `connect`** + `except (socket.timeout, TimeoutError)` | Mensagem de "tempo esgotado ao conectar" (o timeout cobre só a conexão; após conectar a leitura é bloqueante) |
 | Servidor reinicia a conexão | `ConnectionResetError` | Mensagem de "conexão resetada (RST)" |
 | Envio para conexão já fechada | `BrokenPipeError` | Mensagem de "conexão perdida" e encerra o loop |
 | Porta informada não é numérica | `ValueError` no `int()` | Mensagem de "porta inválida" e `sys.exit(1)` |
@@ -167,11 +188,13 @@ ERROR:formato_invalido: Mensagem sem separador ':' ...
 | Porta já em uso / sem permissão | `OSError` no `bind` | Mensagem clara e `sys.exit(1)` |
 | Mensagem do cliente malformada | `ValueError` no `parsear` | Responde `ERROR:formato_invalido` e **continua no ar** (não derruba o servidor) |
 | Encoding inválido | `UnicodeDecodeError` | Responde `ERROR:encoding_invalido` e continua |
+| Tipo na direção errada (ex.: `ACK` vindo do cliente) | `tipo not in TIPOS_CLIENTE_SERVIDOR` | Responde `ERROR:direcao_invalida:<tipo>` e continua |
+| Cliente inativo (sem FIN, sem dados) | `conn.settimeout(60)` + `socket.timeout` | Fecha a sessão ociosa e volta a aceitar novos clientes |
 | Cliente reinicia (RST) | `ConnectionResetError` | Mensagem e encerramento limpo |
 | Cliente some no meio da resposta | `BrokenPipeError` / `ConnectionError` | Mensagem e encerramento limpo |
 | Cliente envia `FIN` (desconecta) | `recv` → `b""` → `receber_mensagem` retorna `None` | Detecta e encerra a sessão |
 | Porta reiniciada rapidamente | `SO_REUSEADDR = 1` | Evita o erro *"Address already in use"* |
-| Entrada padrão do servidor fechada | `EOFError` no `input` | Envia `ACK` e encerra a sessão |
+| Entrada padrão do servidor fechada | `EOFError` no `input` | Envia `BYE:servidor_encerrando` e encerra a sessão |
 | Interrupção do usuário (Ctrl+C) | `KeyboardInterrupt` | Encerramento limpo (`finally` fecha sockets) |
 
 ---
@@ -188,7 +211,7 @@ ERROR:formato_invalido: Mensagem sem separador ':' ...
 | `connect((HOST, PORT))` | Realiza o *Three-Way Handshake* TCP com o servidor. |
 | `sendall(dados)` | Envia todos os bytes (UTF-8) pelo fluxo TCP, sem cortes. |
 | `recv(4096)` | Bloqueia até receber dados; `b""` significa que a outra ponta enviou `FIN`. |
-| `settimeout(seg)` | Limita o tempo de espera do cliente na conexão/leitura. |
+| `settimeout(seg)` | Limita o tempo de espera do cliente **na fase de conexão** (`connect`). Após conectar, a leitura do cliente é bloqueante (`settimeout(None)`); o servidor aplica um timeout de ociosidade (`IDLE_TIMEOUT`) por conexão. |
 | `close()` | Envia `FIN`/`ACK` e libera os recursos de rede. |
 
 ---
@@ -252,12 +275,14 @@ Para gerar a evidência de captura de tráfego (entrega da atividade):
 
 ### O que evidenciar na captura
 
-- **Three-Way Handshake:** pacotes `SYN` → `SYN, ACK` → `ACK` no início da conexão.
-- **Segmentos de dados:** os payloads `HELLO:...`, `ACK:...`, `PING`, `PONG` visíveis na coluna *Info* / *Data* de cada segmento TCP.
+- **Three-Way Handshake:** pacotes `SYN` → `SYN, ACK` → `ACK` no início da conexão (feitos pelo kernel, antes de `accept()` retornar).
+- **Segmentos de dados:** os payloads `HELLO:...`, `MSG:...`, `PING:`, `PONG:` visíveis na coluna *Info* / *Data* de cada segmento TCP.
 - **ACKs de transporte:** confirmações de recebimento do próprio TCP (números de sequência/acknowledgment).
-- **Fechamento:** a sequência de `FIN`/`ACK` ao final (encerramento em duas fases).
+- **Fechamento:** a sequência de `FIN`/`ACK` ao final. Como o servidor fecha primeiro (ao receber `EXIT`), o lado do **servidor** fica em `TIME_WAIT` — é por isso que o `SO_REUSEADDR` do servidor é útil. O encerramento limpo são **4 segmentos** (FIN+ACK de cada lado, em duas fases).
 
 > Dica: use `Analyze → Follow → TCP Stream` no Wireshark para visualizar a conversa completa em texto, mostrando claramente o protocolo `<TIPO>:<DADOS>` trafegando.
+
+> **Nota de sincronismo:** o protocolo é *lockstep* (1 envio ↔ 1 resposta). Ao usar `/ping` ou `/eco`, o cliente lê a resposta imediatamente; ao usar `/sair`, ele lê o `BYE` **antes** de fechar. Isso garante um fechamento `FIN` limpo em vez de `RST` (que ocorreria se o socket fechasse com dados ainda não lidos no buffer).
 
 **Captura anexa:** _(inserir print/screenshot ou arquivo `.pcapng` da captura)_
 
